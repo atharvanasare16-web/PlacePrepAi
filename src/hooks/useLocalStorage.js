@@ -1,13 +1,25 @@
 import { useState, useEffect, useCallback } from 'react';
 
+// ── Predefined storage keys used across the app ─────────────────────────────
+export const KEYS = {
+  API_KEY: 'placeprep_api_key',
+  ROLE_ID: 'placeprep_role_id',
+  ACTIVE_VIEW: 'placeprep_active_view',
+  THEME: 'placeprep_theme',
+};
+
 /**
- * React hook that syncs state with localStorage.
+ * useLocalStorage — useState that persists to localStorage.
  *
- * @param {string} key - localStorage key
- * @param {*} initialValue - Default value when nothing is stored
- * @returns {[any, Function]} Tuple of [storedValue, setValue]
+ * Reads/writes JSON-serialized values under `key`.
+ * Syncs across tabs via the `storage` event.
+ *
+ * @param {string} key           localStorage key
+ * @param {*}      initialValue  fallback when nothing is stored
+ * @returns {[*, function]}      [value, setValue] — same API as useState
  */
 export default function useLocalStorage(key, initialValue) {
+  // ── Lazy initializer ────────────────────────────────────────────────────
   const [storedValue, setStoredValue] = useState(() => {
     try {
       const item = localStorage.getItem(key);
@@ -17,35 +29,37 @@ export default function useLocalStorage(key, initialValue) {
     }
   });
 
+  // ── Setter (supports functional updates like useState) ──────────────────
   const setValue = useCallback(
     (value) => {
-      try {
-        // Allow functional updates like useState
-        const valueToStore = value instanceof Function ? value(storedValue) : value;
-        setStoredValue(valueToStore);
-        localStorage.setItem(key, JSON.stringify(valueToStore));
-      } catch {
-        // Fail silently if localStorage is unavailable
-      }
+      setStoredValue((prev) => {
+        const nextValue = typeof value === 'function' ? value(prev) : value;
+        try {
+          localStorage.setItem(key, JSON.stringify(nextValue));
+        } catch {
+          // quota exceeded or unavailable — keep in-memory value
+        }
+        return nextValue;
+      });
     },
-    [key, storedValue]
+    [key],
   );
 
-  // Sync across tabs / windows via the storage event
+  // ── Cross-tab sync via "storage" event ──────────────────────────────────
   useEffect(() => {
-    const handleStorageChange = (e) => {
-      if (e.key === key && e.newValue !== null) {
-        try {
-          setStoredValue(JSON.parse(e.newValue));
-        } catch {
-          // ignore malformed JSON
-        }
+    const handleStorage = (e) => {
+      if (e.key !== key) return;
+      try {
+        const newValue = e.newValue !== null ? JSON.parse(e.newValue) : initialValue;
+        setStoredValue(newValue);
+      } catch {
+        setStoredValue(initialValue);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, [key]);
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [key, initialValue]);
 
   return [storedValue, setValue];
 }
